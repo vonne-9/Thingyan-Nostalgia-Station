@@ -110,9 +110,11 @@ const STAGE_NAME_WORDS = [
 const STAGE_SESSION_KEY = "thingyan.stage.session";
 const SPOTIFY_SESSION_KEY = "thingyan.spotify.session";
 const STAGE_CHANNEL_NAME = "thingyan-stage";
+const STAGE_HOST_PEER_ID = "thingyan-main-stage-anchor-v1";
 const STAGE_HEARTBEAT_MS = 1200;
 const STAGE_STALE_MS = 6500;
 const LOCAL_BROADCAST_MS = 90;
+const STAGE_RECONNECT_MS = 1800;
 const DEFAULT_POINTER = { x: 0.5, y: 0.34 };
 const SPOTIFY_MAX_RETRIES = 3;
 const SPOTIFY_STATE_KEY = "thingyan.pkce.state";
@@ -132,6 +134,13 @@ const state = {
   stageUser: null,
   stageChannel: null,
   stageHeartbeat: 0,
+  stagePeer: null,
+  stageHostConnection: null,
+  stagePeerClients: new Map(),
+  stageNetworkRole: "offline",
+  stageReconnectTimer: 0,
+  stageRealtimeReady: false,
+  stageRealtimeToken: 0,
   localPointer: { ...DEFAULT_POINTER },
   droplets: [],
   crowd: [],
@@ -614,10 +623,53 @@ function upsertOperator(operator) {
   };
 }
 
-function broadcastStage(type, operator) {
+function broadcastLocalStage(message) {
   if (!state.stageChannel) return;
-  state.stageChannel.postMessage({ type, operator });
+  state.stageChannel.postMessage(message);
+}
+
+function relayToPeerClients(message, exceptPeerId = "") {
+  state.stagePeerClients.forEach((connection, peerId) => {
+    if (!connection.open || peerId === exceptPeerId) return;
+    connection.send(message);
+  });
+}
+
+function sendStageToRealtime(message) {
+  if (!state.stageRealtimeReady) return;
+
+  if (state.stageNetworkRole === "host") {
+    relayToPeerClients(message);
+    return;
+  }
+
+  if (state.stageHostConnection?.open) {
+    state.stageHostConnection.send(message);
+  }
+}
+
+function broadcastStage(type, operator, options = {}) {
+  const message = { type, operator };
+  if (!options.skipLocal) {
+    broadcastLocalStage(message);
+  }
+  if (!options.skipRealtime) {
+    sendStageToRealtime(message);
+  }
   state.lastBroadcastAt = performance.now();
+}
+
+function removeOperator(operatorId) {
+  if (!operatorId || !state.operators[operatorId]) return false;
+  delete state.operators[operatorId];
+  return true;
+}
+
+function getFullSyncMessage() {
+  return {
+    type: "stage-full-sync",
+    operators: getOperatorValues().map((operator) => ({ ...operator })),
+  };
 }
 
 function syncLocalOperator(force = false) {
@@ -640,7 +692,8 @@ function cleanupOperators() {
   Object.values(state.operators).forEach((operator) => {
     if (state.stageUser?.id === operator.id) return;
     if (now - operator.lastSeen > STAGE_STALE_MS) {
-      delete state.operators[operator.id];
+      removeOperator(operator.id);
+      broadcastStage("operator-leave", operator);
       changed = true;
     }
   });
@@ -648,6 +701,34 @@ function cleanupOperators() {
   if (changed) {
     renderOperators();
   }
+}
+
+function applyFullSync(operators) {
+  const nextOperators = {};
+  (operators || []).forEach((operator) => {
+    if (!operator?.id) return;
+    nextOperators[operator.id] = {
+      angle: state.operators[operator.id]?.angle ?? -16,
+      pointer: state.operators[operator.id]?.pointer || { ...DEFAULT_POINTER },
+      sprayActive: false,
+      ...state.operators[operator.id],
+      ...operator,
+    };
+  });
+
+  if (state.stageUser) {
+    const local = getOperatorSnapshot();
+    if (local) {
+      nextOperators[local.id] = {
+        angle: state.operators[local.id]?.angle ?? -16,
+        ...nextOperators[local.id],
+        ...local,
+      };
+    }
+  }
+
+  state.operators = nextOperators;
+  renderOperators();
 }
 
 function joinStage(name) {
@@ -681,7 +762,7 @@ function leaveStage(announce = true, preserveSession = false) {
     broadcastStage("operator-leave", operator);
   }
 
-  delete state.operators[state.stageUser.id];
+  removeOperator(state.stageUser.id);
   const previousName = state.stageUser.name;
   state.stageUser = null;
   if (preserveSession) {
@@ -702,14 +783,25 @@ function leaveStage(announce = true, preserveSession = false) {
   }
 }
 
-function handleStageMessage(event) {
-  const message = event.data;
+function handleIncomingStageMessage(message, source = "local", originPeerId = "") {
   if (!message?.type) return;
 
   if (message.type === "stage-sync-request") {
-    if (state.stageUser) {
+    if (source === "peer" && state.stageNetworkRole === "host") {
+      const target = originPeerId ? state.stagePeerClients.get(originPeerId) : null;
+      if (target?.open) {
+        target.send(getFullSyncMessage());
+      } else {
+        relayToPeerClients(getFullSyncMessage());
+      }
+    } else if (state.stageUser) {
       syncLocalOperator(true);
     }
+    return;
+  }
+
+  if (message.type === "stage-full-sync") {
+    applyFullSync(message.operators || []);
     return;
   }
 
@@ -719,13 +811,230 @@ function handleStageMessage(event) {
   }
 
   if (message.type === "operator-leave") {
-    delete state.operators[operator.id];
-    renderOperators();
+    const changed = removeOperator(operator.id);
+    if (changed) {
+      renderOperators();
+    }
     return;
   }
 
   upsertOperator(operator);
   renderOperators();
+
+  if (source === "peer" && state.stageNetworkRole === "host") {
+    relayToPeerClients(message, originPeerId);
+    broadcastLocalStage(message);
+  }
+}
+
+function handleStageMessage(event) {
+  handleIncomingStageMessage(event.data, "local");
+}
+
+function clearStageRealtime() {
+  if (state.stageReconnectTimer) {
+    window.clearTimeout(state.stageReconnectTimer);
+    state.stageReconnectTimer = 0;
+  }
+
+  state.stageHostConnection?.close();
+  state.stageHostConnection = null;
+
+  state.stagePeerClients.forEach((connection) => connection.close());
+  state.stagePeerClients.clear();
+
+  state.stagePeer?.destroy();
+  state.stagePeer = null;
+  state.stageNetworkRole = "offline";
+  state.stageRealtimeReady = false;
+}
+
+function scheduleStageReconnect(preferHost = true, token = state.stageRealtimeToken) {
+  if (token !== state.stageRealtimeToken) return;
+  if (state.stageReconnectTimer) return;
+
+  state.stageReconnectTimer = window.setTimeout(() => {
+    state.stageReconnectTimer = 0;
+    if (token !== state.stageRealtimeToken) return;
+    initRealtimeStage(preferHost);
+  }, STAGE_RECONNECT_MS + Math.floor(Math.random() * 350));
+}
+
+function attachPeerConnection(connection, token) {
+  state.stagePeerClients.set(connection.peer, connection);
+
+  connection.addEventListener?.("open", () => {});
+  connection.on("data", (message) => {
+    if (token !== state.stageRealtimeToken) return;
+    handleIncomingStageMessage(message, "peer", connection.peer);
+  });
+  connection.on("close", () => {
+    if (token !== state.stageRealtimeToken) return;
+    state.stagePeerClients.delete(connection.peer);
+  });
+  connection.on("error", () => {
+    if (token !== state.stageRealtimeToken) return;
+    state.stagePeerClients.delete(connection.peer);
+  });
+}
+
+function becomeStageHost(peer, token) {
+  state.stagePeer = peer;
+  state.stageHostConnection = null;
+  state.stageNetworkRole = "host";
+  state.stageRealtimeReady = true;
+  state.stagePeerClients.clear();
+
+  peer.on("connection", (connection) => {
+    if (token !== state.stageRealtimeToken) return;
+    attachPeerConnection(connection, token);
+    connection.on("open", () => {
+      if (token !== state.stageRealtimeToken) return;
+      if (connection.open) {
+        connection.send(getFullSyncMessage());
+      }
+    });
+  });
+
+  peer.on("disconnected", () => {
+    if (token !== state.stageRealtimeToken) return;
+    state.stageRealtimeReady = false;
+    scheduleStageReconnect(true, token);
+  });
+
+  peer.on("close", () => {
+    if (token !== state.stageRealtimeToken) return;
+    state.stageRealtimeReady = false;
+    scheduleStageReconnect(true, token);
+  });
+
+  peer.on("error", (error) => {
+    if (token !== state.stageRealtimeToken) return;
+    console.warn("Stage host transport error", error);
+    state.stageRealtimeReady = false;
+    scheduleStageReconnect(true, token);
+  });
+
+  if (state.stageUser) {
+    syncLocalOperator(true);
+  }
+}
+
+function connectGuestToStageHost(token) {
+  if (!state.stagePeer) return;
+
+  const connection = state.stagePeer.connect(STAGE_HOST_PEER_ID, {
+    reliable: false,
+    serialization: "json",
+  });
+  state.stageHostConnection = connection;
+
+  connection.on("open", () => {
+    if (token !== state.stageRealtimeToken) return;
+    state.stageNetworkRole = "guest";
+    state.stageRealtimeReady = true;
+    connection.send({ type: "stage-sync-request" });
+    if (state.stageUser) {
+      syncLocalOperator(true);
+    }
+  });
+
+  connection.on("data", (message) => {
+    if (token !== state.stageRealtimeToken) return;
+    handleIncomingStageMessage(message, "peer", STAGE_HOST_PEER_ID);
+  });
+  connection.on("close", () => {
+    if (token !== state.stageRealtimeToken) return;
+    state.stageRealtimeReady = false;
+    state.stageHostConnection = null;
+    scheduleStageReconnect(true, token);
+  });
+  connection.on("error", (error) => {
+    if (token !== state.stageRealtimeToken) return;
+    console.warn("Stage guest transport error", error);
+    state.stageRealtimeReady = false;
+    state.stageHostConnection = null;
+    scheduleStageReconnect(true, token);
+  });
+}
+
+function createGuestPeer(token) {
+  const peer = new window.Peer();
+  state.stagePeer = peer;
+
+  peer.on("open", () => {
+    if (token !== state.stageRealtimeToken) return;
+    connectGuestToStageHost(token);
+  });
+
+  peer.on("error", (error) => {
+    if (token !== state.stageRealtimeToken) return;
+    console.warn("Stage guest peer error", error);
+    if (error?.type === "peer-unavailable") {
+      clearStageRealtime();
+      initRealtimeStage(true);
+      return;
+    }
+    state.stageRealtimeReady = false;
+    scheduleStageReconnect(true, token);
+  });
+
+  peer.on("disconnected", () => {
+    if (token !== state.stageRealtimeToken) return;
+    state.stageRealtimeReady = false;
+    scheduleStageReconnect(true, token);
+  });
+
+  peer.on("close", () => {
+    if (token !== state.stageRealtimeToken) return;
+    state.stageRealtimeReady = false;
+    scheduleStageReconnect(true, token);
+  });
+}
+
+function initRealtimeStage(preferHost = true) {
+  clearStageRealtime();
+  state.stageRealtimeToken += 1;
+  const token = state.stageRealtimeToken;
+
+  if (!window.Peer) {
+    console.warn("PeerJS is unavailable, stage sync will stay local to this browser.");
+    return;
+  }
+
+  if (!preferHost) {
+    createGuestPeer(token);
+    return;
+  }
+
+  const peer = new window.Peer(STAGE_HOST_PEER_ID);
+  let opened = false;
+
+  peer.on("open", () => {
+    opened = true;
+    if (token !== state.stageRealtimeToken) return;
+    becomeStageHost(peer, token);
+  });
+
+  peer.on("error", (error) => {
+    if (token !== state.stageRealtimeToken) return;
+    if (opened) {
+      console.warn("Stage host transport error", error);
+      state.stageRealtimeReady = false;
+      scheduleStageReconnect(true, token);
+      return;
+    }
+
+    if (error?.type === "unavailable-id") {
+      peer.destroy();
+      createGuestPeer(token);
+      return;
+    }
+
+    console.warn("Could not claim the stage host role", error);
+    peer.destroy();
+    createGuestPeer(token);
+  });
 }
 
 function setupStagePresence() {
@@ -734,6 +1043,8 @@ function setupStagePresence() {
     state.stageChannel.addEventListener("message", handleStageMessage);
     state.stageChannel.postMessage({ type: "stage-sync-request" });
   }
+
+  initRealtimeStage(true);
 
   if (state.stageUser) {
     upsertOperator(getOperatorSnapshot());
@@ -750,6 +1061,7 @@ function setupStagePresence() {
 
   window.addEventListener("beforeunload", () => {
     leaveStage(false, true);
+    clearStageRealtime();
   });
 }
 
