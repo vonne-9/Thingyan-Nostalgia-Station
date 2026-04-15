@@ -774,6 +774,27 @@ function aimHoses() {
   });
 }
 
+function getNozzlePoint(operatorId, fallbackX, fallbackY, fallbackAngle) {
+  const stageRect = els.stage.getBoundingClientRect();
+  const nozzle = els.operatorDeck
+    .querySelector(`[data-operator-id="${operatorId}"] .hose-nozzle`);
+
+  if (nozzle) {
+    const nozzleRect = nozzle.getBoundingClientRect();
+    return {
+      x: nozzleRect.right - stageRect.left,
+      y: nozzleRect.top + nozzleRect.height / 2 - stageRect.top,
+      angle: fallbackAngle,
+    };
+  }
+
+  return {
+    x: fallbackX + Math.cos(fallbackAngle) * 76,
+    y: fallbackY + Math.sin(fallbackAngle) * 76,
+    angle: fallbackAngle,
+  };
+}
+
 function emitDroplets() {
   const stageWidth = els.stage.clientWidth;
   const stageHeight = els.stage.clientHeight;
@@ -784,13 +805,14 @@ function emitDroplets() {
     const baseAngle = ((operator.angle ?? -16) * Math.PI) / 180;
     const pivotX = getOperatorX(index, operators.length) * stageWidth;
     const pivotY = stageHeight - 214;
+    const nozzlePoint = getNozzlePoint(operator.id, pivotX, pivotY, baseAngle);
 
     for (let count = 0; count < 6; count += 1) {
       const speed = 7 + Math.random() * 4.5;
       const spread = ((Math.random() - 0.5) * 14 * Math.PI) / 180;
       state.droplets.push({
-        x: pivotX + Math.cos(baseAngle) * 76,
-        y: pivotY + Math.sin(baseAngle) * 76,
+        x: nozzlePoint.x,
+        y: nozzlePoint.y,
         vx: Math.cos(baseAngle + spread) * speed,
         vy: Math.sin(baseAngle + spread) * speed,
         life: 0,
@@ -807,6 +829,7 @@ function drawScene() {
   const ctx = els.canvas.getContext("2d");
   ctx.clearRect(0, 0, els.stage.clientWidth, els.stage.clientHeight);
   ctx.lineCap = "round";
+  ctx.lineJoin = "round";
 
   state.droplets = state.droplets.filter((droplet) => droplet.life < droplet.maxLife);
   state.droplets.forEach((droplet) => {
