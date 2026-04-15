@@ -16,6 +16,7 @@ A nostalgic Burmese Thingyan-themed Spotify wrapper built as a static front-end.
 - A multi-hose festival stage that can show multiple active operators
 - Pointer-driven water spray animation that soaks the crowd
 - Cross-device stage sync so different phones and laptops can move hoses together
+- A Vercel stage API that handles join/update/leave requests and refreshes the shared stage view
 
 ## Run it locally
 
@@ -44,5 +45,6 @@ Use `http://127.0.0.1`, not `http://localhost`. For deployed environments, Spoti
 
 - Direct playback through the Spotify Web Playback SDK typically requires a Spotify Premium account.
 - If Spotify is not configured yet, the page still works in demo mode so the Thingyan visuals and hose interaction can be explored.
-- The multi-user stage now uses a WebRTC room via PeerJS, so different devices on the public site can join the same stage and see each other's hose movement live.
-- If realtime transport is blocked by a browser/network policy, the app still falls back to same-browser sync with `BroadcastChannel`.
+- The multi-user stage now syncs through `/api/stage`, with `POST` requests for join/update/leave and polling to refresh the shared stage state across devices.
+- `BroadcastChannel` is still used locally so multiple tabs on the same device feel responsive right away while the server snapshot catches up.
+- If you add `KV_REST_API_URL` and `KV_REST_API_TOKEN` (or the Upstash REST equivalents) in Vercel, the stage API will use durable shared storage instead of the local dev fallback store.
