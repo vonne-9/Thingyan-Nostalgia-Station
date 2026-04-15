@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Thingyan Waves</title>
+    <meta
+      name="description"
+      content="A nostalgic Thingyan-themed Spotify wrapper with a playable water festival stage."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;700;800&family=Noto+Sans+Myanmar:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css?v=20260414l" />
+    <script src="https://sdk.scdn.co/spotify-player.js" defer></script>
+    <script src="./config.js?v=20260414b" defer></script>
+    <script src="./app.js?v=20260414h" defer></script>
+  </head>
+  <body>
+    <div class="page-shell">
+      <main class="experience-grid">
+        <section class="stage-panel">
+          <div class="booth-blooms" aria-hidden="true">
+            <div class="padauk-branch booth-left">
+              <span class="stem"></span>
+              <span class="blossom a"></span>
+              <span class="blossom b"></span>
+              <span class="blossom c"></span>
+              <span class="blossom d"></span>
+              <span class="blossom e"></span>
+              <span class="bud bud-a"></span>
+              <span class="bud bud-b"></span>
+            </div>
+            <div class="padauk-branch booth-right">
+              <span class="stem"></span>
+              <span class="blossom a"></span>
+              <span class="blossom b"></span>
+              <span class="blossom c"></span>
+              <span class="blossom d"></span>
+              <span class="blossom e"></span>
+              <span class="bud bud-a"></span>
+              <span class="bud bud-b"></span>
+            </div>
+          </div>
+          <div class="stage-header">
+            <div>
+              <p class="section-kicker">သင်္ကြန် Nostalgia Station</p>
+              <h1>Thingyan Waves</h1>
+              <p id="statusText" class="status-text">
+                “Thingyan Moe” is loaded by default. Click a stage speaker to play.
+              </p>
+            </div>
+            <div id="userBadge" class="user-badge offline">0 hoses online</div>
+          </div>
+
+          <div class="stage-login-card">
+            <div class="stage-login-copy">
+              <p class="field-label">Interactive stage login</p>
+              <p class="stage-login-text">
+                Join with a cool nickname and control your hose on the stage.
+              </p>
+            </div>
+            <div class="stage-login-form">
+              <input
+                id="stageNameInput"
+                type="text"
+                maxlength="24"
+                placeholder="Type your stage name"
+              />
+              <button id="regenerateNameButton" class="secondary-button compact" type="button">
+                Generate new name
+              </button>
+              <button id="stageJoinButton" class="primary-button compact">Join stage</button>
+              <button id="stageLeaveButton" class="secondary-button compact">Leave</button>
+            </div>
+            <div id="stageRoster" class="stage-roster"></div>
+          </div>
+
+          <div class="stage-wrap">
+            <div class="stage-lights" aria-hidden="true">
+              <span></span><span></span><span></span><span></span><span></span
+              ><span></span><span></span><span></span>
+            </div>
+
+            <div id="stage" class="stage">
+              <div class="stage-banner">THINGYAN WAVES</div>
+
+              <button id="leftSpeaker" class="stage-speaker left" aria-label="Play current song from left speaker">
+                <span class="speaker-ring top"></span>
+                <span class="speaker-ring bottom"></span>
+              </button>
+              <button id="rightSpeaker" class="stage-speaker right" aria-label="Play current song from right speaker">
+                <span class="speaker-ring top"></span>
+                <span class="speaker-ring bottom"></span>
+              </button>
+
+              <div id="operatorStand" class="operator-stand">
+                <div id="operatorDeck" class="operator-deck"></div>
+                <div id="operatorEmpty" class="operator-empty">
+                  Join the stage to light up a hose on the booth.
+                </div>
+              </div>
+
+              <canvas id="sprayCanvas" aria-hidden="true"></canvas>
+
+              <div id="crowd" class="crowd" aria-label="Festival crowd"></div>
+
+              <div class="stage-instructions">
+                Move your mouse or finger to aim. Hold down to spray the crowd.
+              </div>
+            </div>
+          </div>
+          <div class="padauk-bowl stage-bowl" aria-hidden="true">
+              <span class="bowl-rim"></span>
+              <span class="bowl-body"></span>
+              <span class="bowl-shadow"></span>
+              <span class="cluster c1"></span>
+              <span class="cluster c2"></span>
+              <span class="cluster c3"></span>
+              <span class="leaf l1"></span>
+              <span class="leaf l2"></span>
+              <span class="leaf l3"></span>
+            </div>
+        </section>
+
+        <aside class="player-panel">
+          <div class="panel-head">
+            <div>
+              <p class="section-kicker">Spotify</p>
+              <h2>Stage music panel</h2>
+            </div>
+            <div id="devicePill" class="device-pill">No Spotify device</div>
+          </div>
+
+          <div class="connect-card">
+            <button id="loginButton" class="primary-button">Log in with Spotify</button>
+            <div class="panel-now-playing">
+              <p class="field-label">Now playing</p>
+              <h3 id="nowPlayingTitle">Thingyan Moe</h3>
+              <p id="nowPlayingArtist">Zaw Paing</p>
+            </div>
+            <div class="panel-speaker-controls">
+              <button id="leftPlayPauseButton" class="speaker-control-button" type="button">Play</button>
+              <label class="speaker-volume panel-volume">
+                <span>Volume</span>
+                <input id="leftVolumeSlider" type="range" min="0" max="100" value="68" />
+              </label>
+              <input id="rightVolumeSlider" type="hidden" min="0" max="100" value="68" />
+              <button id="rightPlayPauseButton" class="visually-hidden" type="button" tabindex="-1" aria-hidden="true">
+                Play
+              </button>
+            </div>
+          </div>
+
+          <div class="library-card">
+            <div class="tabs-row">
+              <button id="songsTab" class="tab-button active" type="button">Songs</button>
+              <button id="playlistsTab" class="tab-button" type="button">Playlists</button>
+            </div>
+
+            <div class="results-head">
+              <p id="panelTitle" class="field-label">Thingyan songs</p>
+              <span id="resultsHint">Select an item to put it on the stage.</span>
+            </div>
+
+            <div id="playlistTrail" class="playlist-trail hidden">
+              <button id="backToPlaylistsButton" class="secondary-button compact" type="button">
+                Back to playlists
+              </button>
+            </div>
+
+            <div id="resultsList" class="results-list"></div>
+          </div>
+        </aside>
+      </main>
+    </div>
+  </body>
+</html>
